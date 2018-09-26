@@ -9,14 +9,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"v2ray.com/core/main/confloader"
-	"v2ray.com/ext/sysio"
-
 	"v2ray.com/core"
+	"v2ray.com/core/main/confloader"
 	_ "v2ray.com/core/main/distro/all"
-
-	v2rayconf "v2ray.com/ext/tools/conf/serial"
+	"v2ray.com/ext/sysio"
 	mobasset "golang.org/x/mobile/asset"
+	v2rayconf "v2ray.com/ext/tools/conf/serial"
 )
 
 type V2RayPoint struct {
@@ -29,12 +27,16 @@ type V2RayPoint struct {
 	ConfigureContent	string
 }
 
-/*V2RayCallbacks a Callback set for V2Ray
+/*
+	V2RayCallbacks a Callback set for V2Ray
  */
 type V2RayCallbacks interface {
 	OnEmitStatus(int, string) int
 }
 
+/**
+	PrintVersion 打印内核版本号到控制台
+ */
 func PrintVersion() {
 	version := core.VersionStatement()
 	for _, s := range version {
@@ -42,52 +44,12 @@ func PrintVersion() {
 	}
 }
 
+/**
+	Version 返回内核的版本号
+ */
 func Version() string {
 	return core.Version()
 }
-
-func createV2Ray(configFile string) (*core.Instance, error) {
-	configInput, err := confloader.LoadConfig(configFile)
-	if err != nil {
-		return nil, newError("failed to load config: ", configFile).Base(err)
-	}
-	defer configInput.Close()
-
-	config, err := core.LoadConfig("json", configFile, configInput)
-	if err != nil {
-		return nil, newError("failed to read config file: ", configFile).Base(err)
-	}
-
-	server, err := core.New(config)
-	if err != nil {
-		return nil, newError("failed to create server").Base(err)
-	}
-
-	return server, nil
-}
-
-//func Start(configFile string) {
-//	var err error
-//	if (server == nil) {
-//		// create a new server
-//		server, err = createV2Ray(configFile)
-//		if err != nil {
-//			fmt.Sprintln(err.Error())
-//			os.Exit(23)
-//		}
-//	}
-//
-//	if err := server.Start(); err != nil {
-//		fmt.Sprintln("Failed to start", err)
-//		os.Exit(-1)
-//	}
-//
-//	osSignals := make(chan os.Signal, 1)
-//	signal.Notify(osSignals, os.Interrupt, os.Kill, syscall.SIGTERM)
-//
-//	<-osSignals
-//	server.Close()
-//}
 
 func (v *V2RayPoint) pointloop() {
 	var config core.Config
@@ -122,6 +84,9 @@ func (v * V2RayPoint) emitStatus(code int, message string) {
 	}
 }
 
+/**
+	RunLoop 运行 V2Ray 服务，该操作是线程安全的
+ */
 func (v * V2RayPoint) RunLoop() {
 	v.v2rayOP.Lock()
 	if !v.status.IsRunning {
@@ -137,6 +102,9 @@ func (v *V2RayPoint) stopLoopW() {
 	v.Callbacks.OnEmitStatus(0, "Closed")
 }
 
+/**
+	StopLoop 停止 V2Ray 服务，该操作是线程安全的
+ */
 func (v *V2RayPoint) StopLoop() {
 	v.v2rayOP.Lock()
 	if v.status.IsRunning {
@@ -145,10 +113,16 @@ func (v *V2RayPoint) StopLoop() {
 	v.v2rayOP.Unlock()
 }
 
+/**
+	GetIsRunning 获取 V2Ray 服务是否处于运行状态
+ */
 func (v *V2RayPoint) GetIsRunning() bool {
 	return v.status.IsRunning
 }
 
+/**
+	NewV2RayPoint 新建 V2RayPoint 的实例
+ */
 func NewV2RayPoint(assertPrefix string) *V2RayPoint {
 	if assertPrefix != "" {
 		// 设置环境变量
@@ -171,8 +145,8 @@ func NewV2RayPoint(assertPrefix string) *V2RayPoint {
 	return &V2RayPoint{ status: Status{}, v2rayOP: new(sync.Mutex) }
 }
 
-/*NetworkInterrupted inform us to restart the v2ray,
-closing dead connections.
+/*
+	NetworkInterrupted 通知我们重启 V2Ray 服务，关闭死连接
 */
 func (v *V2RayPoint) NetworkInterrupted() {
 	/*
