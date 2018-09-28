@@ -1,9 +1,13 @@
 package libv2ray
 
 import (
+	"crypto/tls"
 	"fmt"
+	"github.com/jochasinga/requests"
 	"io"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -25,6 +29,10 @@ type V2RayPoint struct {
 
 	ConfigureFile		string
 	ConfigureContent	string
+
+	EnableHeartbeat		bool
+
+	heartbeatTimer		*time.Timer
 }
 
 /*
@@ -75,7 +83,46 @@ func (v *V2RayPoint) pointloop() {
 	v.status.IsRunning = true
 	v.status.Vpoint.Start()
 
+	// 启动一个定时器，执行到服务器的心跳
+	v.heartbeatTimer = time.AfterFunc(5*time.Second, v.Heartbeat)
+
 	go v.emitStatus(0, "Running")
+}
+
+func (v * V2RayPoint) Heartbeat() {
+	if !v.EnableHeartbeat {
+		return
+	}
+
+	timeout := func(r *requests.Request) {
+		r.Timeout = time.Duration(5) * time.Second
+		// 设置自身为代理
+		r.Proxy = func (_ *http.Request) (*url.URL, error) {
+			return url.Parse("socks5://127.0.0.1:1089")
+		}
+		// 启用ssl
+		r.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		r.Transport.Proxy = r.Proxy
+		r.Transport.TLSClientConfig = r.TLSClientConfig
+		// 实际起作用的代理配置
+		r.Client.Transport = r.Transport
+	}
+	response, err := requests.Head("https://www.google.com", timeout)
+	if err != nil || response.StatusCode != 200 {
+		if err != nil {
+			log.Println("Error:", err.Error())
+		}
+		if response != nil {
+			log.Println("StatusCode:", response.StatusCode)
+		}
+		go v.emitStatus(503, "Heartbeat")
+
+	} else {
+		go v.emitStatus(0, "Heartbeat")
+	}
+
+	// 继续执行心跳
+	v.heartbeatTimer.Reset(5 * time.Second)
 }
 
 func (v * V2RayPoint) emitStatus(code int, message string) {
@@ -98,8 +145,12 @@ func (v * V2RayPoint) RunLoop() {
 func (v *V2RayPoint) stopLoopW() {
 	v.status.IsRunning = false
 	v.status.Vpoint.Close()
+	if v.heartbeatTimer != nil {
+		// 停止心跳
+		v.heartbeatTimer.Stop()
+	}
 
-	v.Callbacks.OnEmitStatus(0, "Closed")
+	go v.emitStatus(0, "Closed")
 }
 
 /**
