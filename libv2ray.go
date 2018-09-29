@@ -18,7 +18,7 @@ import (
 	_ "v2ray.com/core/main/distro/all"
 	"v2ray.com/ext/sysio"
 	mobasset "golang.org/x/mobile/asset"
-	v2rayconf "v2ray.com/ext/tools/conf/serial"
+	"v2ray.com/ext/tools/conf"
 )
 
 type V2RayPoint struct {
@@ -33,6 +33,8 @@ type V2RayPoint struct {
 	EnableHeartbeat		bool
 
 	heartbeatTimer		*time.Timer
+
+	Config				*conf.Config
 }
 
 /*
@@ -61,10 +63,9 @@ func Version() string {
 
 func (v *V2RayPoint) pointloop() {
 	var config core.Config
-	log.Println("ConfigureFile:" + v.ConfigureFile)
 	if v.ConfigureFile == "json" {
-		conf, _ := v2rayconf.LoadJSONConfig(strings.NewReader(v.ConfigureContent))
-		config = *conf
+		conf, jsonConf, _ := LoadJSONConfig(strings.NewReader(v.ConfigureContent))
+		config, v.Config = *conf, jsonConf
 	} else {
 		configInput, _ := confloader.LoadConfig(v.ConfigureFile)
 
@@ -98,7 +99,19 @@ func (v * V2RayPoint) Heartbeat() {
 		r.Timeout = time.Duration(5) * time.Second
 		// 设置自身为代理
 		r.Proxy = func (_ *http.Request) (*url.URL, error) {
-			return url.Parse("socks5://127.0.0.1:1089")
+			var proxyUri string;
+			if v.Config != nil {
+				// 从配置从获取代理
+				protocol := v.Config.InboundConfig.Protocol
+				if protocol == "socks" {
+					protocol += "5"
+				}
+				proxyUri = fmt.Sprintf("%s://%s:%d", protocol, v.Config.InboundConfig.Listen.String(), v.Config.InboundConfig.Port.From)
+			} else {
+				// 默认使用的代理配置
+				proxyUri = "socks5://127.0.0.1:1089"
+			}
+			return url.Parse(proxyUri)
 		}
 		// 启用ssl
 		r.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
