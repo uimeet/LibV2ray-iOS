@@ -34,6 +34,8 @@ type V2RayPoint struct {
 
 	heartbeatTimer		*time.Timer
 
+	UID					string
+
 	Config				*conf.Config
 }
 
@@ -120,8 +122,8 @@ func (v * V2RayPoint) Heartbeat() {
 		// 实际起作用的代理配置
 		r.Client.Transport = r.Transport
 	}
-	response, err := requests.Head("https://www.google.com", timeout)
-	if err != nil || response.StatusCode != 200 {
+	response, err := requests.Head("http://192.168.168.168/?uid=" + v.UID, timeout)
+	if err != nil || response.StatusCode < 200 || response.StatusCode > 299 {
 		if err != nil {
 			log.Println("Error:", err.Error())
 		}
