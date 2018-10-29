@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"github.com/jochasinga/requests"
+	mobasset "golang.org/x/mobile/asset"
 	"io"
 	"log"
 	"net/http"
@@ -17,8 +18,12 @@ import (
 	"v2ray.com/core/main/confloader"
 	_ "v2ray.com/core/main/distro/all"
 	"v2ray.com/ext/sysio"
-	mobasset "golang.org/x/mobile/asset"
 	"v2ray.com/ext/tools/conf"
+)
+
+const (
+	HB_STATUS_RUNNING int = iota
+	HB_STATUS_STOPPED
 )
 
 type V2RayPoint struct {
@@ -30,9 +35,8 @@ type V2RayPoint struct {
 	ConfigureFile		string
 	ConfigureContent	string
 
-	EnableHeartbeat		bool
-
-	heartbeatTimer		*time.Timer
+	EnableHeartbeat		bool // 是否启用心跳
+	hbStatus			int	// 心跳状态
 
 	UID					string
 
@@ -84,45 +88,53 @@ func (v *V2RayPoint) pointloop() {
 	}
 
 	v.status.IsRunning = true
-	v.status.Vpoint.Start()
+	// 默认禁用心跳
+	v.hbStatus = HB_STATUS_STOPPED
 
-	// 启动一个定时器，执行到服务器的心跳
-	v.heartbeatTimer = time.AfterFunc(5*time.Second, v.Heartbeat)
+	v.status.Vpoint.Start()
+	// 启用心跳检测
+	if (v.EnableHeartbeat) {
+		go v.HeartbeatLoop()
+	}
 
 	go v.emitStatus(0, "Running")
+
+	//osSignals := make(chan os.Signal, 1)
+	//signal.Notify(osSignals, os.Interrupt, os.Kill, syscall.SIGTERM)
+	//
+	//<-osSignals
+	//go v.StopLoop()
 }
 
-func (v * V2RayPoint) Heartbeat() {
-	if !v.EnableHeartbeat {
-		return
-	}
-
-	timeout := func(r *requests.Request) {
-		r.Timeout = time.Duration(5) * time.Second
-		// 设置自身为代理
-		r.Proxy = func (_ *http.Request) (*url.URL, error) {
-			var proxyUri string;
-			if v.Config != nil {
-				// 从配置从获取代理
-				protocol := v.Config.InboundConfig.Protocol
-				if protocol == "socks" {
-					protocol += "5"
-				}
-				proxyUri = fmt.Sprintf("%s://%s:%d", protocol, v.Config.InboundConfig.Listen.String(), v.Config.InboundConfig.Port.From)
-			} else {
-				// 默认使用的代理配置
-				proxyUri = "socks5://127.0.0.1:1089"
+func (v *V2RayPoint) heartbeatTimeout (r *requests.Request) {
+	r.Timeout = time.Duration(5) * time.Second
+	// 设置自身为代理
+	r.Proxy = func(_ *http.Request) (*url.URL, error) {
+		var proxyUri string;
+		if v.Config != nil {
+			// 从配置从获取代理
+			protocol := v.Config.InboundConfig.Protocol
+			if protocol == "socks" {
+				protocol += "5"
 			}
-			return url.Parse(proxyUri)
+			proxyUri = fmt.Sprintf("%s://%s:%d", protocol, v.Config.InboundConfig.Listen.String(), v.Config.InboundConfig.Port.From)
+		} else {
+			// 默认使用的代理配置
+			proxyUri = "socks5://127.0.0.1:1089"
 		}
-		// 启用ssl
-		r.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-		r.Transport.Proxy = r.Proxy
-		r.Transport.TLSClientConfig = r.TLSClientConfig
-		// 实际起作用的代理配置
-		r.Client.Transport = r.Transport
+		return url.Parse(proxyUri)
 	}
-	response, err := requests.Head("http://192.168.168.168/?uid=" + v.UID, timeout)
+	// 启用ssl
+	r.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	r.Transport.Proxy = r.Proxy
+	r.Transport.TLSClientConfig = r.TLSClientConfig
+	// 实际起作用的代理配置
+	r.Client.Transport = r.Transport
+}
+
+func (v *V2RayPoint) HeartbeatOnce() int {
+
+	response, err := requests.Head("http://192.168.168.168/?uid="+v.UID, v.heartbeatTimeout)
 	if err != nil || response.StatusCode < 200 || response.StatusCode > 299 {
 		if err != nil {
 			log.Println("Error:", err.Error())
@@ -130,14 +142,29 @@ func (v * V2RayPoint) Heartbeat() {
 		if response != nil {
 			log.Println("StatusCode:", response.StatusCode)
 		}
-		go v.emitStatus(503, "Heartbeat")
-
-	} else {
-		go v.emitStatus(0, "Heartbeat")
+		return 503
 	}
 
-	// 继续执行心跳
-	v.heartbeatTimer.Reset(5 * time.Second)
+	return 0
+}
+
+func (v * V2RayPoint) HeartbeatLoop() {
+	// 休眠 5 秒
+	time.Sleep(5 * time.Second)
+
+	v.hbStatus = HB_STATUS_RUNNING
+
+	go func() {
+		for {
+			if v.hbStatus != HB_STATUS_RUNNING {
+				return
+			}
+			// 执行一次心跳
+			v.HeartbeatOnce()
+			time.Sleep(5 * time.Second)
+		}
+	}()
+
 }
 
 func (v * V2RayPoint) emitStatus(code int, message string) {
@@ -160,10 +187,7 @@ func (v * V2RayPoint) RunLoop() {
 func (v *V2RayPoint) stopLoopW() {
 	v.status.IsRunning = false
 	v.status.Vpoint.Close()
-	if v.heartbeatTimer != nil {
-		// 停止心跳
-		v.heartbeatTimer.Stop()
-	}
+	v.hbStatus = HB_STATUS_STOPPED
 
 	go v.emitStatus(0, "Closed")
 }
@@ -190,6 +214,8 @@ func (v *V2RayPoint) GetIsRunning() bool {
 	NewV2RayPoint 新建 V2RayPoint 的实例
  */
 func NewV2RayPoint(assertPrefix string) *V2RayPoint {
+	//os.Setenv("v2ray.ray.buffer.size", "1")
+	os.Setenv("v2ray.buf.readv", "enable")
 	if assertPrefix != "" {
 		// 设置环境变量
 		os.Setenv("v2ray.location.asset", assertPrefix)
@@ -208,7 +234,7 @@ func NewV2RayPoint(assertPrefix string) *V2RayPoint {
 		}
 	}
 
-	return &V2RayPoint{ status: Status{}, v2rayOP: new(sync.Mutex) }
+	return &V2RayPoint{ status: Status{}, v2rayOP: new(sync.Mutex), hbStatus: HB_STATUS_STOPPED }
 }
 
 /*
