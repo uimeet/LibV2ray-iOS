@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -215,7 +216,8 @@ func (v *V2RayPoint) GetIsRunning() bool {
  */
 func NewV2RayPoint(assertPrefix string) *V2RayPoint {
 	//os.Setenv("v2ray.ray.buffer.size", "1")
-	os.Setenv("v2ray.buf.readv", "enable")
+	debug.SetGCPercent(10)
+	//os.Setenv("v2ray.buf.readv", "enable")
 	if assertPrefix != "" {
 		// 设置环境变量
 		os.Setenv("v2ray.location.asset", assertPrefix)
