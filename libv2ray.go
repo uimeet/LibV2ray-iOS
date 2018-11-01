@@ -230,7 +230,7 @@ func NewV2RayPoint(assertPrefix string) *V2RayPoint {
 				if ok {
 					return os.Open(by)
 				}
-				return mobasset.Open(p)
+				return mobasset.Open(path)
 			}
 			return os.Open(path)
 		}
