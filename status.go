@@ -6,5 +6,5 @@ import (
 
 type Status struct {
 	IsRunning		bool
-	Vpoint			core.Server
+	Vpoint			*core.Instance
 }

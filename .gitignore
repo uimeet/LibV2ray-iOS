@@ -12,3 +12,4 @@
 *.out
 .idea/
 *.framework/
+.DS_Store

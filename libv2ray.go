@@ -1,8 +1,12 @@
 package libv2ray
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
+	t2score "github.com/eycorsican/go-tun2socks/core"
+	"github.com/eycorsican/go-tun2socks/proxy/v2ray"
+	"github.com/eycorsican/go-tun2socks/tun"
 	"github.com/jochasinga/requests"
 	mobasset "golang.org/x/mobile/asset"
 	"io"
@@ -17,6 +21,7 @@ import (
 	"time"
 	"v2ray.com/core"
 	"v2ray.com/core/main/confloader"
+	"v2ray.com/core/app/proxyman"
 	_ "v2ray.com/core/main/distro/all"
 	"v2ray.com/ext/sysio"
 	"v2ray.com/ext/tools/conf"
@@ -25,6 +30,10 @@ import (
 const (
 	HB_STATUS_RUNNING int = iota
 	HB_STATUS_STOPPED
+)
+const (
+	MTU = 1500
+	DELAY_ICMP = 10
 )
 
 type V2RayPoint struct {
@@ -68,7 +77,31 @@ func Version() string {
 	return core.Version()
 }
 
+func (v *V2RayPoint) openTunDevice() io.ReadWriteCloser {
+	dnsServers := [] string{ "114.114.114.114", "223.5.5.5" }
+	tunDev, err := tun.OpenTunDevice("TunanTun1", "240.0.0.2", "240.0.0.1", "255.255.255.0", dnsServers)
+	if err != nil {
+		log.Fatalf("failed to open tun device: %v", err)
+	}
+
+	return tunDev
+}
+
+func (v *V2RayPoint) newLWIPWriter() t2score.LWIPStack {
+	lwipWriter := t2score.NewLWIPStack().(io.Writer)
+	if DELAY_ICMP > 0 {
+		lwipWriter = &icmpDelayedWriter{writer: lwipWriter, delay: DELAY_ICMP}
+	}
+
+	return lwipWriter
+}
+
 func (v *V2RayPoint) pointloop() {
+	validSniffings := []string { "http", "tls" }
+
+	tunDev := v.openTunDevice()
+	lwipWriter := v.newLWIPWriter()
+
 	var config core.Config
 	if v.ConfigureFile == "json" {
 		conf, jsonConf, _ := LoadJSONConfig(strings.NewReader(v.ConfigureContent))
@@ -93,10 +126,38 @@ func (v *V2RayPoint) pointloop() {
 	v.hbStatus = HB_STATUS_STOPPED
 
 	v.status.Vpoint.Start()
+
+	sniffingConfig := &proxyman.SniffingConfig{
+		Enabled:				true,
+		DestinationOverride:	validSniffings,
+	}
+	if len(validSniffings) == 0 {
+		sniffingConfig.Enabled = false
+	}
+
+	ctx := proxyman.ContextWithSniffingConfig(context.Background(), sniffingConfig)
+
+	vhandler := v2ray.NewHandler(ctx, v.status.Vpoint)
+	t2score.RegisterTCPConnectionHandler(vhandler)
+	t2score.RegisterUDPConnectionHandler(vhandler)
+
+	t2score.RegisterOutputFn(func (data []byte) (int, error) {
+		return tunDev.Write(data)
+	})
+
+	go func() {
+		_, err := io.CopyBuffer(lwipWriter, tunDev, make([]byte, MTU))
+		if err != nil {
+			log.Fatal("copying data failed: %v", err)
+		}
+	}()
+
 	// 启用心跳检测
 	if (v.EnableHeartbeat) {
 		go v.HeartbeatLoop()
 	}
+
+	log.Printf("running tun2socks")
 
 	go v.emitStatus(0, "Running")
 
