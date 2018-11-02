@@ -114,11 +114,11 @@ func (v *V2RayPoint) heartbeatTimeout (r *requests.Request) {
 		var proxyUri string;
 		if v.Config != nil {
 			// 从配置从获取代理
-			protocol := v.Config.InboundConfig.Protocol
+			protocol := v.Config.InboundConfigs[0].Protocol
 			if protocol == "socks" {
 				protocol += "5"
 			}
-			proxyUri = fmt.Sprintf("%s://%s:%d", protocol, v.Config.InboundConfig.Listen.String(), v.Config.InboundConfig.Port.From)
+			proxyUri = fmt.Sprintf("%s://%s:%d", protocol, v.Config.InboundConfigs[0].ListenOn.String(), v.Config.InboundConfigs[0].PortRange.From)
 		} else {
 			// 默认使用的代理配置
 			proxyUri = "socks5://127.0.0.1:1089"
