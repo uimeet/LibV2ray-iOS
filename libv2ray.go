@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -172,6 +173,8 @@ func (v * V2RayPoint) emitStatus(code int, message string) {
 	if v.Callbacks != nil {
 		v.Callbacks.OnEmitStatus(code, message)
 	}
+	runtime.GC()
+	debug.FreeOSMemory()
 }
 
 /**
